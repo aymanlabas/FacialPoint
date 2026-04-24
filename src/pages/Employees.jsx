@@ -1,0 +1,370 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { Plus, Edit2, Trash2, Search, X, Camera, Check, Eye } from 'lucide-react';
+import FirebaseService from '../services/FirebaseService';
+import FaceRecognitionService from '../services/FaceRecognitionService';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '../firebase';
+import './Employees.css';
+
+export default function Employees() {
+    const [searchTerm, setSearchTerm] = useState('');
+    const [employees, setEmployees] = useState([]);
+    const [loading, setLoading] = useState(true);
+
+    // Modal State (Add/Edit)
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [currentEmp, setCurrentEmp] = useState({ name: '', email: '', role: 'employee', department: '', descriptor: null, photo: null });
+    const [isEditing, setIsEditing] = useState(false);
+
+    // Historique State
+    const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+    const [selectedEmpHistory, setSelectedEmpHistory] = useState([]);
+    const [viewingEmp, setViewingEmp] = useState(null);
+
+    // Camera state for registering face
+    const videoRef = useRef(null);
+    const [isScanningFace, setIsScanningFace] = useState(false);
+    const [scanMessage, setScanMessage] = useState('');
+
+    const fetchEmployees = async () => {
+        setLoading(true);
+        try {
+            const data = await FirebaseService.getData('users');
+            setEmployees(data);
+        } catch (error) {
+            console.error("Erreur serveur :", error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchEmployees();
+        FaceRecognitionService.loadModels();
+    }, []);
+
+    const filteredEmployees = employees.filter(emp =>
+        (emp.name && emp.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (emp.email && emp.email.toLowerCase().includes(searchTerm.toLowerCase()))
+    );
+
+    const handleOpenAdd = () => {
+        setCurrentEmp({ name: '', email: '', role: 'employee', department: '', descriptor: null, photo: null });
+        setIsEditing(false);
+        setIsModalOpen(true);
+    };
+
+    const handleOpenEdit = (emp) => {
+        setCurrentEmp(emp);
+        setIsEditing(true);
+        setIsModalOpen(true);
+    };
+
+    const handleOpenHistory = async (emp) => {
+        setViewingEmp(emp);
+        setIsHistoryModalOpen(true);
+        try {
+            // Fetch attendance for this user
+            const q = query(collection(db, 'attendance'), where('userId', '==', emp.id));
+            const querySnapshot = await getDocs(q);
+            const history = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            // Sort by timestamp desc
+            history.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+            setSelectedEmpHistory(history);
+        } catch (error) {
+            console.error("Erreur de récupération de l'historique", error);
+            setSelectedEmpHistory([]);
+        }
+    };
+
+    const handleDelete = async (id) => {
+        if (window.confirm("Voulez-vous vraiment supprimer cet employé et ses données ?")) {
+            try {
+                await FirebaseService.deleteData('users', id);
+                fetchEmployees();
+            } catch (error) {
+                console.error("Erreur de suppression:", error);
+            }
+        }
+    };
+
+    // ----- FEATURE: Scan du Visage + Photo -----
+    const startFaceScan = async () => {
+        setIsScanningFace(true);
+        setScanMessage('Initialisation de la caméra...');
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: {} });
+            if (videoRef.current) {
+                videoRef.current.srcObject = stream;
+            }
+        } catch (err) {
+            setScanMessage("Impossible d'accéder à la webcam.");
+            return;
+        }
+    };
+
+    const stopCamera = () => {
+        if (videoRef.current && videoRef.current.srcObject) {
+            videoRef.current.srcObject.getTracks().forEach(track => track.stop());
+        }
+        setIsScanningFace(false);
+    };
+
+    const handleVideoPlay = () => {
+        setScanMessage('Analyse en cours... Veuillez rester immobile.');
+        const scanInterval = setInterval(async () => {
+            if (!isScanningFace || !videoRef.current) {
+                clearInterval(scanInterval);
+                return;
+            }
+
+            const detections = await FaceRecognitionService.detectFace(videoRef.current);
+
+            if (detections.length === 1) {
+                // Obtenir l'empreinte mathématique (pour l'IA)
+                const descriptor = FaceRecognitionService.extractDescriptor(detections[0]);
+
+                // Prendre une photo pour l'interface visuelle (Base64)
+                const canvas = document.createElement('canvas');
+                canvas.width = videoRef.current.videoWidth;
+                canvas.height = videoRef.current.videoHeight;
+                canvas.getContext('2d').drawImage(videoRef.current, 0, 0);
+                const photoDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+
+                setCurrentEmp(prev => ({ ...prev, descriptor, photo: photoDataUrl }));
+                setScanMessage('Visage et photo enregistrés !');
+                clearInterval(scanInterval);
+                setTimeout(() => stopCamera(), 1500);
+            } else if (detections.length > 1) {
+                setScanMessage('Erreur: Plusieurs visages détectés.');
+            }
+        }, 1000);
+    };
+    // --------------------------------------------------
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        try {
+            if (isEditing) {
+                const { id, ...dataToUpdate } = currentEmp;
+                await FirebaseService.updateData('users', id, dataToUpdate);
+            } else {
+                await FirebaseService.saveData('users', currentEmp);
+            }
+            fetchEmployees();
+            setIsModalOpen(false);
+        } catch (error) {
+            alert("Erreur lors de l'enregistrement ! Vérifiez vos règles Firestore.");
+        }
+    };
+
+    return (
+        <div className="dashboard animate-fade-in relative">
+            <div className="dashboard-header mb-6 flex justify-between items-center">
+                <div>
+                    <h1>Gestion des Employés</h1>
+                    <p className="text-muted">Profils, Empreintes faciales (Photos) et Historiques</p>
+                </div>
+                <button onClick={handleOpenAdd} className="btn btn-primary">
+                    <Plus size={18} /> Nouvel Employé
+                </button>
+            </div>
+
+            <div className="content-card glass-panel">
+                <div className="card-header pb-4 flex justify-between items-center">
+                    <h2>Liste des Employés</h2>
+                    <div className="input-wrapper" style={{ minWidth: '250px' }}>
+                        <Search className="input-icon" size={18} />
+                        <input
+                            type="text"
+                            className="input-field with-icon"
+                            placeholder="Rechercher..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+                    </div>
+                </div>
+
+                <div className="table-responsive mt-4">
+                    <table className="data-table align-middle">
+                        <thead>
+                            <tr>
+                                <th>Photo</th>
+                                <th>Nom</th>
+                                <th>Département</th>
+                                <th>Rôle</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {loading ? (
+                                <tr><td colSpan="5" className="text-center p-8">Chargement...</td></tr>
+                            ) : filteredEmployees.length > 0 ? (
+                                filteredEmployees.map(emp => (
+                                    <tr key={emp.id}>
+                                        <td>
+                                            {emp.photo ? (
+                                                <img src={emp.photo} alt={emp.name} className="emp-avatar" />
+                                            ) : (
+                                                <div className="emp-avatar undefined-avatar">?</div>
+                                            )}
+                                        </td>
+                                        <td>
+                                            <div className="font-medium">{emp.name || 'N/A'}</div>
+                                            <div className="text-sm text-muted">{emp.email}</div>
+                                        </td>
+                                        <td>{emp.department || '-'}</td>
+                                        <td>
+                                            <span className={`badge ${emp.role === 'admin' ? 'badge-admin' : 'badge-emp'}`}>
+                                                {emp.role}
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <div className="flex gap-2">
+                                                <button onClick={() => handleOpenHistory(emp)} className="btn-icon text-accent" title="Voir l'historique">
+                                                    <Eye size={18} />
+                                                </button>
+                                                <button onClick={() => handleOpenEdit(emp)} className="btn-icon" title="Modifier">
+                                                    <Edit2 size={16} />
+                                                </button>
+                                                <button onClick={() => handleDelete(emp.id)} className="btn-icon" style={{ color: 'var(--danger)' }} title="Supprimer">
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))
+                            ) : (
+                                <tr>
+                                    <td colSpan="5" className="text-center p-8 text-muted">Aucun employé trouvé.</td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            {/* --- MODAL DAJOUT/EDITION --- */}
+            {isModalOpen && (
+                <div className="modal-overlay">
+                    <div className="modal-card glass-panel animate-fade-in" style={{ maxHeight: '90vh', overflowY: 'auto' }}>
+                        <div className="modal-header">
+                            <h2>{isEditing ? 'Modifier Employé' : 'Ajouter un Employé'}</h2>
+                            <button className="btn-icon" onClick={() => { setIsModalOpen(false); stopCamera(); }}>
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleSubmit} className="modal-body gap-4">
+                            <div className="input-group mb-0">
+                                <label>Nom complet</label>
+                                <input type="text" className="input-field" value={currentEmp.name} onChange={e => setCurrentEmp({ ...currentEmp, name: e.target.value })} required />
+                            </div>
+
+                            <div className="input-group mb-0">
+                                <label>Email</label>
+                                <input type="email" className="input-field" value={currentEmp.email} onChange={e => setCurrentEmp({ ...currentEmp, email: e.target.value })} required />
+                            </div>
+
+                            {/* Zone Face ID & Photo */}
+                            <div className="face-id-section p-4 mt-2" style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', background: 'rgba(0,0,0,0.2)' }}>
+                                <div className="flex justify-between items-center mb-2">
+                                    <h3 className="text-sm font-medium">BEmpreinte & Photo</h3>
+                                    {currentEmp.photo ? (
+                                        <span className="badge badge-primary"><Check size={12} /> Actif</span>
+                                    ) : (
+                                        <span className="badge badge-secondary">Optionnel</span>
+                                    )}
+                                </div>
+
+                                {currentEmp.photo && !isScanningFace && (
+                                    <div className="text-center mt-2 mb-4">
+                                        <img src={currentEmp.photo} alt="preview" style={{ width: '100px', height: '100px', objectFit: 'cover', borderRadius: '50%', border: '2px solid var(--primary-light)' }} />
+                                    </div>
+                                )}
+
+                                {isScanningFace ? (
+                                    <div className="camera-preview mt-4">
+                                        <video ref={videoRef} autoPlay muted onPlay={handleVideoPlay} style={{ width: '100%', borderRadius: 'var(--radius-sm)' }} />
+                                        <p className="text-center text-sm mt-2 text-primary-light">{scanMessage}</p>
+                                        <button type="button" onClick={stopCamera} className="btn btn-secondary w-full mt-2 text-sm">Annuler le scan</button>
+                                    </div>
+                                ) : (
+                                    <button type="button" onClick={startFaceScan} className="btn btn-secondary w-full mt-2 justify-center">
+                                        <Camera size={16} /> {currentEmp.descriptor ? 'Mettre à jour la photo' : 'Prendre la photo'}
+                                    </button>
+                                )}
+                            </div>
+
+                            <div className="input-group mb-0 mt-2">
+                                <label>Rôle</label>
+                                <select className="input-field" style={{ backgroundColor: 'rgb(20,20,30)' }} value={currentEmp.role} onChange={e => setCurrentEmp({ ...currentEmp, role: e.target.value })}>
+                                    <option value="employee">Employé(e)</option>
+                                    <option value="admin">Administrateur</option>
+                                </select>
+                            </div>
+
+                            <div className="modal-footer mt-4 flex gap-4">
+                                <button type="button" onClick={() => { setIsModalOpen(false); stopCamera(); }} className="btn btn-secondary w-full">Annuler</button>
+                                <button type="submit" disabled={isScanningFace} className="btn btn-primary w-full">
+                                    {isEditing ? 'Mettre à jour' : "Créer l'employé"}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* --- MODAL HISTORIQUE (CHECK-IN / OUT) --- */}
+            {isHistoryModalOpen && viewingEmp && (
+                <div className="modal-overlay">
+                    <div className="modal-card glass-panel animate-fade-in" style={{ maxWidth: '600px' }}>
+                        <div className="modal-header">
+                            <div className="flex items-center gap-4">
+                                {viewingEmp.photo && <img src={viewingEmp.photo} alt="Avatar" style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} />}
+                                <div>
+                                    <h2>Historique: {viewingEmp.name}</h2>
+                                    <p className="text-sm text-muted">{viewingEmp.email}</p>
+                                </div>
+                            </div>
+                            <button className="btn-icon" onClick={() => setIsHistoryModalOpen(false)}>
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <div className="modal-body" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+                            {selectedEmpHistory.length > 0 ? (
+                                <table className="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Date</th>
+                                            <th>Heure</th>
+                                            <th>Opération</th>
+                                            <th>Confiance (IA)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {selectedEmpHistory.map(log => (
+                                            <tr key={log.id}>
+                                                <td>{log.date}</td>
+                                                <td className="font-medium">{log.time}</td>
+                                                <td>
+                                                    <span className="badge badge-primary">DÉTECTION (Visage)</span>
+                                                </td>
+                                                <td className="text-sm text-muted">
+                                                    {log.confidence ? `${(100 - (log.confidence * 100)).toFixed(1)}%` : '-'}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            ) : (
+                                <div className="text-center p-8 text-muted">Aucun pointage enregistré pour cet employé.</div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
