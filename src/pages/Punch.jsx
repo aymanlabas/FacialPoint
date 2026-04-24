@@ -2,6 +2,7 @@ import React, { useRef, useState, useEffect } from 'react';
 import { Camera, CheckCircle, XCircle, RefreshCw } from 'lucide-react';
 import FaceRecognitionService from '../services/FaceRecognitionService';
 import FirebaseService from '../services/FirebaseService';
+import TelegramService from '../services/TelegramService';
 import './Punch.css';
 
 export default function Punch() {
@@ -117,23 +118,70 @@ export default function Punch() {
     };
 
     const handleCheckIn = async (employee, distance) => {
-        setStatus('success');
         setIdentifiedUser(employee);
-        setMessage(`Bienvenue ${employee.name} !`);
 
         try {
+            const time = new Date().toLocaleTimeString();
+            const todayDate = new Date().toLocaleDateString('fr-CA'); // YYYY-MM-DD
+
+            // On récupère l'historique du pointage de cet employé
+            const history = await FirebaseService.getDataByCondition('attendance', 'userId', '==', employee.id);
+
+            // On garde seulement ceux d'aujourd'hui et on trie par le plus récent d'abord
+            const todayPunches = history
+                .filter(record => record.date === todayDate)
+                .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+            // --- VÉRIFICATION DU DÉLAI (Anti-spam d'1 minute) ---
+            if (todayPunches.length > 0) {
+                const lastPunchTime = new Date(todayPunches[0].timestamp).getTime();
+                const diffTime = (new Date().getTime() - lastPunchTime) / 1000; // en secondes
+
+                if (diffTime < 60) { // S'il a pointé il y a moins de 60 secondes
+                    setStatus('error');
+                    setMessage(`Pointage refusé: Vous venez de pointer il y a moins d'une minute.`);
+                    setTimeout(() => {
+                        setStatus('idle');
+                        setMessage('Prêt pour le prochain pointage.');
+                        setIdentifiedUser(null);
+                        handleVideoPlay();
+                    }, 4000);
+                    return; // On stoppe l'enregistrement ici
+                }
+            }
+
+            // Déterminer automatiquement si c'est une Entrée ou une Sortie
+            let actionType = 'check-in';
+            if (todayPunches.length > 0 && todayPunches[0].type === 'check-in') {
+                actionType = 'check-out';
+            }
+
+            setStatus('success'); // Succès confirmé avant affichage du msg
+
+            // Message dynamique pour l'écran
+            const greetingMsg = actionType === 'check-in'
+                ? `Entrée: Bienvenue ${employee.name} !`
+                : `Sortie: À bientôt ${employee.name} !`;
+
+            setMessage(greetingMsg);
+
             const attendanceRecord = {
                 userId: employee.id,
                 userName: employee.name,
-                date: new Date().toLocaleDateString('fr-CA'), // YYYY-MM-DD
-                time: new Date().toLocaleTimeString(),
+                date: todayDate,
+                time: time,
                 timestamp: new Date().toISOString(),
-                type: 'check-in',
+                type: actionType,
                 confidence: distance
             };
             await FirebaseService.saveData('attendance', attendanceRecord);
+
+            // Notification Telegram Automatique avec le bon type
+            TelegramService.sendNotification(employee.name, employee.department, actionType, time);
+
         } catch (error) {
             console.log("Erreur de sauvegarde de la présence Firestore.", error);
+            setMessage(`Erreur lors de l'enregistrement.`);
         }
 
         // Reset après 4 secondes pour le prochain employé

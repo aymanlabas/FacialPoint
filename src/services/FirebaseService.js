@@ -29,6 +29,20 @@ class FirebaseService {
     }
 
     /**
+     * Récupère des documents selon une condition
+     */
+    async getDataByCondition(collectionName, fieldPath, opStr, value) {
+        try {
+            const q = query(collection(db, collectionName), where(fieldPath, opStr, value));
+            const querySnapshot = await getDocs(q);
+            return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        } catch (error) {
+            console.error(`Error getting data by condition from ${collectionName}:`, error);
+            throw error;
+        }
+    }
+
+    /**
      * Récupère un document spécifique par ID
      */
     async getDocument(collectionName, docId) {
