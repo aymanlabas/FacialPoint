@@ -1,7 +1,7 @@
 import React from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { LogOut, ScanFace, LayoutDashboard, Users } from 'lucide-react';
+import { LogOut, ScanFace, LayoutDashboard, Users, QrCode, User } from 'lucide-react';
 import './Navbar.css';
 
 export default function Navbar() {
@@ -39,6 +39,12 @@ export default function Navbar() {
                 )}
                 <Link to="/punch" className="nav-item">
                     <ScanFace size={18} /> Pointage
+                </Link>
+                <Link to="/scanner" className="nav-item">
+                    <QrCode size={18} /> Scanner QR
+                </Link>
+                <Link to="/profile" className="nav-item">
+                    <User size={18} /> Mon QR
                 </Link>
             </div>
 

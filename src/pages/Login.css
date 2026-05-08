@@ -83,6 +83,27 @@
     border-top: 1px solid var(--border-color);
 }
 
+.login-footer p {
+    margin: 0.5rem 0;
+}
+
+.link-accent {
+    color: var(--accent-color);
+    text-decoration: none;
+    font-weight: 600;
+    transition: opacity 0.3s ease;
+}
+
+.link-accent:hover {
+    opacity: 0.8;
+}
+
+.divider {
+    margin: 1rem 0;
+    color: var(--text-muted);
+    font-size: 0.875rem;
+}
+
 .mock-creds {
     display: flex;
     justify-content: center;

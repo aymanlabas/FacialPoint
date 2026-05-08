@@ -2,19 +2,22 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Edit2, Trash2, Search, X, Camera, Check, Eye } from 'lucide-react';
 import FirebaseService from '../services/FirebaseService';
 import FaceRecognitionService from '../services/FaceRecognitionService';
+import { useAuth } from '../context/AuthContext';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
 import './Employees.css';
 
 export default function Employees() {
+    const { createUser } = useAuth();
     const [searchTerm, setSearchTerm] = useState('');
     const [employees, setEmployees] = useState([]);
     const [loading, setLoading] = useState(true);
 
     // Modal State (Add/Edit)
     const [isModalOpen, setIsModalOpen] = useState(false);
-    const [currentEmp, setCurrentEmp] = useState({ name: '', email: '', role: 'employee', department: '', descriptor: null, photo: null });
+    const [currentEmp, setCurrentEmp] = useState({ name: '', email: '', password: '', confirmPassword: '', role: 'employee', department: '', descriptor: null, photo: null });
     const [isEditing, setIsEditing] = useState(false);
+    const [empFormError, setEmpFormError] = useState('');
 
     // Historique State
     const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
@@ -49,13 +52,15 @@ export default function Employees() {
     );
 
     const handleOpenAdd = () => {
-        setCurrentEmp({ name: '', email: '', role: 'employee', department: '', descriptor: null, photo: null });
+        setCurrentEmp({ name: '', email: '', password: '', confirmPassword: '', role: 'employee', department: '', descriptor: null, photo: null });
+        setEmpFormError('');
         setIsEditing(false);
         setIsModalOpen(true);
     };
 
     const handleOpenEdit = (emp) => {
-        setCurrentEmp(emp);
+        setCurrentEmp({ ...emp, password: '', confirmPassword: '' });
+        setEmpFormError('');
         setIsEditing(true);
         setIsModalOpen(true);
     };
@@ -64,11 +69,9 @@ export default function Employees() {
         setViewingEmp(emp);
         setIsHistoryModalOpen(true);
         try {
-            // Fetch attendance for this user
             const q = query(collection(db, 'attendance'), where('userId', '==', emp.id));
             const querySnapshot = await getDocs(q);
             const history = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            // Sort by timestamp desc
             history.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
             setSelectedEmpHistory(history);
         } catch (error) {
@@ -121,10 +124,8 @@ export default function Employees() {
             const detections = await FaceRecognitionService.detectFace(videoRef.current);
 
             if (detections.length === 1) {
-                // Obtenir l'empreinte mathématique (pour l'IA)
                 const descriptor = FaceRecognitionService.extractDescriptor(detections[0]);
 
-                // Prendre une photo pour l'interface visuelle (Base64)
                 const canvas = document.createElement('canvas');
                 canvas.width = videoRef.current.videoWidth;
                 canvas.height = videoRef.current.videoHeight;
@@ -144,17 +145,66 @@ export default function Employees() {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        setEmpFormError('');
+
+        // Password validation (only required when adding)
+        if (!isEditing) {
+            if (!currentEmp.password || currentEmp.password.length < 6) {
+                setEmpFormError('Le mot de passe doit contenir au moins 6 caractères.');
+                return;
+            }
+            if (currentEmp.password !== currentEmp.confirmPassword) {
+                setEmpFormError('Les mots de passe ne correspondent pas.');
+                return;
+            }
+        } else if (currentEmp.password) {
+            // If editing and password is filled, validate it
+            if (currentEmp.password.length < 6) {
+                setEmpFormError('Le mot de passe doit contenir au moins 6 caractères.');
+                return;
+            }
+            if (currentEmp.password !== currentEmp.confirmPassword) {
+                setEmpFormError('Les mots de passe ne correspondent pas.');
+                return;
+            }
+        }
+
         try {
             if (isEditing) {
-                const { id, ...dataToUpdate } = currentEmp;
+                const { id, confirmPassword, ...dataToUpdate } = currentEmp;
+                // Don't save empty password on edit
+                if (!dataToUpdate.password) delete dataToUpdate.password;
                 await FirebaseService.updateData('users', id, dataToUpdate);
             } else {
-                await FirebaseService.saveData('users', currentEmp);
+                const { confirmPassword, password, ...formData } = currentEmp;
+                // 1. Create user in Firebase Auth
+                const newUser = await createUser(
+                    formData.email, 
+                    password, 
+                    formData.name.split(' ')[0], 
+                    formData.name.split(' ').slice(1).join(' ')
+                );
+                
+                // Sauvegarde complète incluant la photo et l'empreinte faciale
+                await FirebaseService.updateData('users', newUser.uid, {
+                    department: formData.department || '',
+                    role: formData.role || 'employee',
+                    name: formData.name,
+                    photo: formData.photo || null,
+                    descriptor: formData.descriptor || null
+                });
             }
             fetchEmployees();
             setIsModalOpen(false);
+            stopCamera();
         } catch (error) {
-            alert("Erreur lors de l'enregistrement ! Vérifiez vos règles Firestore.");
+            console.error("Erreur complète:", error);
+            if (error.code === 'auth/email-already-in-use') {
+                setEmpFormError('Cet email est déjà utilisé.');
+            } else {
+                // Afficher l'erreur réelle pour le diagnostic
+                setEmpFormError(`Erreur: ${error.message || "Problème de connexion"}`);
+            }
         }
     };
 
@@ -165,9 +215,11 @@ export default function Employees() {
                     <h1>Gestion des Employés</h1>
                     <p className="text-muted">Profils, Empreintes faciales (Photos) et Historiques</p>
                 </div>
-                <button onClick={handleOpenAdd} className="btn btn-primary">
-                    <Plus size={18} /> Nouvel Employé
-                </button>
+                <div className="flex gap-2">
+                    <button onClick={handleOpenAdd} className="btn btn-primary">
+                        <Plus size={18} /> Nouvel Employé
+                    </button>
+                </div>
             </div>
 
             <div className="content-card glass-panel">
@@ -244,18 +296,24 @@ export default function Employees() {
                 </div>
             </div>
 
-            {/* --- MODAL DAJOUT/EDITION --- */}
+            {/* --- MODAL AJOUT/EDITION --- */}
             {isModalOpen && (
                 <div className="modal-overlay">
                     <div className="modal-card glass-panel animate-fade-in" style={{ maxHeight: '90vh', overflowY: 'auto' }}>
                         <div className="modal-header">
                             <h2>{isEditing ? 'Modifier Employé' : 'Ajouter un Employé'}</h2>
-                            <button className="btn-icon" onClick={() => { setIsModalOpen(false); stopCamera(); }}>
+                            <button className="btn-icon" onClick={() => { setIsModalOpen(false); stopCamera(); setEmpFormError(''); }}>
                                 <X size={20} />
                             </button>
                         </div>
 
                         <form onSubmit={handleSubmit} className="modal-body gap-4">
+                            {empFormError && (
+                                <div className="error-alert mb-4">
+                                    {empFormError}
+                                </div>
+                            )}
+
                             <div className="input-group mb-0">
                                 <label>Nom complet</label>
                                 <input type="text" className="input-field" value={currentEmp.name} onChange={e => setCurrentEmp({ ...currentEmp, name: e.target.value })} required />
@@ -266,10 +324,34 @@ export default function Employees() {
                                 <input type="email" className="input-field" value={currentEmp.email} onChange={e => setCurrentEmp({ ...currentEmp, email: e.target.value })} required />
                             </div>
 
+                            <div className="input-group mb-0">
+                                <label>{isEditing ? 'Nouveau mot de passe (laisser vide pour ne pas changer)' : 'Mot de passe'}</label>
+                                <input
+                                    type="password"
+                                    className="input-field"
+                                    placeholder={isEditing ? 'Laisser vide pour ne pas modifier' : 'Minimum 6 caractères'}
+                                    value={currentEmp.password}
+                                    onChange={e => setCurrentEmp({ ...currentEmp, password: e.target.value })}
+                                    required={!isEditing}
+                                />
+                            </div>
+
+                            <div className="input-group mb-0">
+                                <label>Confirmer le mot de passe</label>
+                                <input
+                                    type="password"
+                                    className="input-field"
+                                    placeholder="Confirmez le mot de passe"
+                                    value={currentEmp.confirmPassword}
+                                    onChange={e => setCurrentEmp({ ...currentEmp, confirmPassword: e.target.value })}
+                                    required={!isEditing || !!currentEmp.password}
+                                />
+                            </div>
+
                             {/* Zone Face ID & Photo */}
                             <div className="face-id-section p-4 mt-2" style={{ border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', background: 'rgba(0,0,0,0.2)' }}>
                                 <div className="flex justify-between items-center mb-2">
-                                    <h3 className="text-sm font-medium">BEmpreinte & Photo</h3>
+                                    <h3 className="text-sm font-medium">Empreinte & Photo</h3>
                                     {currentEmp.photo ? (
                                         <span className="badge badge-primary"><Check size={12} /> Actif</span>
                                     ) : (
@@ -305,7 +387,7 @@ export default function Employees() {
                             </div>
 
                             <div className="modal-footer mt-4 flex gap-4">
-                                <button type="button" onClick={() => { setIsModalOpen(false); stopCamera(); }} className="btn btn-secondary w-full">Annuler</button>
+                                <button type="button" onClick={() => { setIsModalOpen(false); stopCamera(); setEmpFormError(''); }} className="btn btn-secondary w-full">Annuler</button>
                                 <button type="submit" disabled={isScanningFace} className="btn btn-primary w-full">
                                     {isEditing ? 'Mettre à jour' : "Créer l'employé"}
                                 </button>

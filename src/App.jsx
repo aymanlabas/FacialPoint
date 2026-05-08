@@ -10,6 +10,8 @@ import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Punch from './pages/Punch';
 import Employees from './pages/Employees';
+import Profile from './pages/Profile';
+import Scanner from './pages/Scanner';
 
 function App() {
   return (
@@ -37,6 +39,18 @@ function App() {
               <Route path="/punch" element={
                 <ProtectedRoute>
                   <Punch />
+                </ProtectedRoute>
+              } />
+
+              <Route path="/profile" element={
+                <ProtectedRoute>
+                  <Profile />
+                </ProtectedRoute>
+              } />
+
+              <Route path="/scanner" element={
+                <ProtectedRoute>
+                  <Scanner />
                 </ProtectedRoute>
               } />
 

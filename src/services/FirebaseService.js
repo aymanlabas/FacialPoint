@@ -1,5 +1,5 @@
 import { db } from '../firebase';
-import { collection, doc, addDoc, getDocs, getDoc, updateDoc, deleteDoc, query, where } from 'firebase/firestore';
+import { collection, doc, addDoc, getDocs, getDoc, updateDoc, deleteDoc, query, where, setDoc } from 'firebase/firestore';
 
 class FirebaseService {
     /**
@@ -11,6 +11,19 @@ class FirebaseService {
             return { id: docRef.id, ...data };
         } catch (error) {
             console.error(`Error saving data to ${collectionName}:`, error);
+            throw error;
+        }
+    }
+
+    /**
+     * Enregistre ou écrase une donnée avec un ID spécifique
+     */
+    async setDocument(collectionName, docId, data) {
+        try {
+            await setDoc(doc(db, collectionName, docId), data);
+            return { id: docId, ...data };
+        } catch (error) {
+            console.error(`Error setting document ${docId} in ${collectionName}:`, error);
             throw error;
         }
     }
