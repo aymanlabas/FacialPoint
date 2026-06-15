@@ -12,6 +12,8 @@ import Punch from './pages/Punch';
 import Employees from './pages/Employees';
 import Profile from './pages/Profile';
 import Scanner from './pages/Scanner';
+import Leaves from './pages/Leaves';
+import LeaveManagement from './pages/LeaveManagement';
 
 function App() {
   return (
@@ -51,6 +53,18 @@ function App() {
               <Route path="/scanner" element={
                 <ProtectedRoute>
                   <Scanner />
+                </ProtectedRoute>
+              } />
+
+              <Route path="/leaves" element={
+                <ProtectedRoute>
+                  <Leaves />
+                </ProtectedRoute>
+              } />
+
+              <Route path="/leave-management" element={
+                <ProtectedRoute requiredRole="admin">
+                  <LeaveManagement />
                 </ProtectedRoute>
               } />
 

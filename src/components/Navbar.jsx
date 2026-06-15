@@ -1,7 +1,7 @@
 import React from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { LogOut, ScanFace, LayoutDashboard, Users, QrCode, User } from 'lucide-react';
+import { LogOut, ScanFace, LayoutDashboard, Users, QrCode, User, Calendar } from 'lucide-react';
 import './Navbar.css';
 
 export default function Navbar() {
@@ -35,7 +35,15 @@ export default function Navbar() {
                         <Link to="/employees" className="nav-item">
                             <Users size={18} /> Employés
                         </Link>
+                        <Link to="/leave-management" className="nav-item">
+                            <Calendar size={18} /> Congés
+                        </Link>
                     </>
+                )}
+                {userRole !== 'admin' && (
+                    <Link to="/leaves" className="nav-item">
+                        <Calendar size={18} /> Mes congés
+                    </Link>
                 )}
                 <Link to="/punch" className="nav-item">
                     <ScanFace size={18} /> Pointage
